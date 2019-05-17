@@ -13,16 +13,27 @@ import org.achartengine.renderer.XYSeriesRenderer;
 
 import java.util.ArrayList;
 
+import beaconlocalization.dataloader.Waypoint;
+
 public class ScatterPlot {
 
     private String seriesName;
     private ArrayList<Double> xList;
     private ArrayList<Double> yList;
 
+    private double greenX, greenY;
+
+    private ArrayList<Double> xWaypointList;
+    private ArrayList<Double> yWaypointList;;
+    private Waypoint currWaypoint;
+
     public ScatterPlot (String seriesName) {
         this.seriesName = seriesName;
         xList = new ArrayList<>();
         yList = new ArrayList<>();
+
+        xWaypointList= new ArrayList<>();
+        yWaypointList= new ArrayList<>();
     }
 
     public GraphicalView getGraphView(Context context) {
@@ -42,10 +53,29 @@ public class ScatterPlot {
         for (int i = 0; i < yList.size(); i++)
             ySet[i] = yList.get(i);
 
+        double[] xWaypointSet = new double[xWaypointList.size()];
+        for (int i = 0; i < xWaypointList.size(); i++)
+            xWaypointSet[i] = xWaypointList.get(i);
+
+        //adding the y-axis data from an ArrayList to a standard array
+        double[] yWaypointSet = new double[yWaypointList.size()];
+        for (int i = 0; i < yWaypointList.size(); i++)
+            yWaypointSet[i] = yWaypointList.get(i);
+
         //creating a new sequence using the x-axis and y-axis data
         mySeries = new XYSeries(seriesName);
         for (int i = 0; i < xSet.length; i++)
             mySeries.add(xSet[i], ySet[i]);
+
+        XYSeries wayPointSeries = new XYSeries("Waypoints");
+        for (int i = 0; i < xWaypointSet.length; i++)
+            wayPointSeries.add(xWaypointSet[i], yWaypointSet[i]);
+
+
+        XYSeries currWayPointSeries = new XYSeries("Curr Waypoint");
+        if(currWaypoint != null){
+            currWayPointSeries.add(greenX, greenY);
+        }
 
         //defining chart visual properties
         myRenderer = new XYSeriesRenderer();
@@ -54,11 +84,27 @@ public class ScatterPlot {
 //        myRenderer.setColor(Color.GREEN);
         myRenderer.setColor(Color.parseColor("#ff0099ff"));
 
+        //defining chart visual properties
+        XYSeriesRenderer myWaypointRenderer= new XYSeriesRenderer();
+        myWaypointRenderer.setFillPoints(true);
+        myWaypointRenderer.setPointStyle(PointStyle.DIAMOND);
+        myWaypointRenderer.setColor(Color.RED);
+        //myRenderer.setColor(Color.parseColor("#ff0099ff"));
+
+        XYSeriesRenderer currWaypointRenderer = new XYSeriesRenderer();
+        currWaypointRenderer.setFillPoints(true);
+        currWaypointRenderer.setPointStyle(PointStyle.DIAMOND);
+        currWaypointRenderer.setColor(Color.GREEN);
+
         myMultiSeries = new XYMultipleSeriesDataset();
         myMultiSeries.addSeries(mySeries);
+        myMultiSeries.addSeries(wayPointSeries);
+        myMultiSeries.addSeries(currWayPointSeries);
 
         myMultiRenderer = new XYMultipleSeriesRenderer();
         myMultiRenderer.addSeriesRenderer(myRenderer);
+        myMultiRenderer.addSeriesRenderer(myWaypointRenderer);
+        myMultiRenderer.addSeriesRenderer(currWaypointRenderer);
 
         //setting text graph element sizes
         myMultiRenderer.setPointSize(10); //size of scatter plot points
@@ -83,13 +129,40 @@ public class ScatterPlot {
         myMultiRenderer.setYAxisMax(bound);
 
         //returns the graphical view containing the graphz
-        return ChartFactory.getScatterChartView(context, myMultiSeries, myMultiRenderer);
+        GraphicalView test = ChartFactory.getScatterChartView(context, myMultiSeries, myMultiRenderer);
+        return test;
     }
 
     //add a point to the series
     public void addPoint(double x, double y) {
         xList.add(x);
         yList.add(y);
+    }
+
+    public void addWaypoint(Waypoint w){
+        if(currWaypoint == null){
+            currWaypoint = w;
+            greenX = w.getX();
+            greenY = w.getY();
+            //xWaypointList.add((double) (w.getX()));
+            //yWaypointList.add((double) (w.getY()));
+        } else {
+            double x_diff = w.getX() - currWaypoint.getX();
+            double y_diff = w.getY() - currWaypoint.getY();
+            double currX = xList.get(xList.size()-1);
+            double currY = yList.get(yList.size()-1);
+
+            //xWaypointList.add (currX + x_diff);
+            //yWaypointList.add (currY + y_diff);
+
+            xWaypointList.add (greenX);
+            yWaypointList.add (greenY);
+
+            greenX = currX + x_diff;
+            greenY = currY + y_diff;
+            currWaypoint = w;
+        }
+
     }
 
     public float getLastXPoint() {

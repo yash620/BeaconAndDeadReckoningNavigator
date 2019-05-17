@@ -2,10 +2,7 @@ package nisargpatel.deadreckoning.activity;
 
 import android.Manifest;
 import android.annotation.TargetApi;
-import android.app.Activity;
 import android.content.pm.PackageManager;
-import android.content.res.ColorStateList;
-import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -19,17 +16,31 @@ import android.support.annotation.NonNull;
 import android.support.design.widget.FloatingActionButton;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.util.Pair;
 import android.view.View;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.Toast;
+
+import com.kontakt.sdk.android.ble.manager.ProximityManager;
+import com.kontakt.sdk.android.common.KontaktSDK;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
+import beaconlocalization.BeaconScanOperator;
+import beaconlocalization.dataloader.DataReader;
+import beaconlocalization.dataloader.Waypoint;
+import beaconlocalization.dataloader.WaypointDataLoader;
 import nisargpatel.deadreckoning.R;
 import nisargpatel.deadreckoning.extra.ExtraFunctions;
 import nisargpatel.deadreckoning.filewriting.DataFileWriter;
@@ -95,11 +106,45 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
 
     private float initialHeading;
 
+
+    private LinkedList<String> alertMessages;
+    private LinkedList<Pair<Integer, Integer>> wayPointOrder;
+    private HashMap<Pair<Integer, Integer>, Waypoint> waypoints;
+
+    BeaconScanOperator scanner;
+
     @TargetApi(Build.VERSION_CODES.KITKAT)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_graph);
+
+
+
+        /* The waypoint order represents the output of some algorithm that will return an ordered
+         * list that represents the order of waypoints to travel to reach the destination. We plan
+         * for this to be some kind of graph search algorithm from a graph that has waypoints
+         * with an  to their next hop waypoints.
+         */
+        wayPointOrder = new LinkedList<>();
+        wayPointOrder.push(Pair.create(0,0));
+        wayPointOrder.push(Pair.create(65, -41));
+        wayPointOrder.push(Pair.create(88, -108));
+        wayPointOrder.push(Pair.create(190, -104));
+        wayPointOrder.push(Pair.create(272, -62));
+
+        /*
+         * alertMessages represents the messages in order that are displayed when the user arrives
+         * at each waypoint. In the future we planned for some sort of algorithm to construct the
+         * message based on knowing where each waypoint is relative to next waypoint.
+         */
+        alertMessages = new LinkedList<>();
+        alertMessages.push("Go to room 6207, should be further down corridor");
+        alertMessages.push("Go to room 6029, should be in same direction further down corridor");
+        alertMessages.push("Go to room 6009, should be further down corridor and then turn left");
+        alertMessages.push( "Go to room 6001, should further down corridor");
+
+
 
         // get location permission
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
@@ -198,18 +243,33 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
                     SensorManager.SENSOR_DELAY_FASTEST);
         }
 
+        //This is code for loading in data from the dataset file and intializing the scanner
+        KontaktSDK.initialize("");
+        waypoints = loadData();
+        scanner = new BeaconScanOperator(this);
+        for(Pair<Integer, Integer> key : waypoints.keySet()){
+            Log.d("key: ", key.toString());
+            Log.d("key: ", Integer.toString(key.hashCode()));
+        }
+
+        for(Pair<Integer, Integer> key : wayPointOrder) {
+            Log.d("key: ", key.toString());
+            Log.d("Order: ", Integer.toString(key.hashCode()));
+        }
+        //Add the first waypoint to the graphing plot
+        Waypoint toAdd  = waypoints.get(wayPointOrder.pollLast());
+        scatterPlot.addWaypoint(toAdd);
+        scanner.setWaypointScanningFor(toAdd);
+
         //setting up buttons
         fabButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
 
-                Log.d("testing", "button press");
-
                 if (!isRunning) {
 
-                    Log.d("testing", "button press -> true");
-
                     isRunning = true;
+                    scanner.startScanning();
 
                     createFiles();
 
@@ -247,10 +307,9 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
 
                 } else {
 
-                    Log.d("testing", "button press -> false");
-
                     firstRun = true;
                     isRunning = false;
+                    scanner.stopScanning();
 
                     fabButton.setImageDrawable(ContextCompat.getDrawable(GraphActivity.this, R.drawable.ic_play_arrow_black_24dp));
 
@@ -289,6 +348,49 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
             }
         });
 
+
+    }
+
+    /**
+     * Load data from the specified file. Currently file name hard coded in.
+     * @return HashMap from Pair of (x-coordinate, y-coordinate) to waypoint object
+     */
+    private  HashMap<Pair<Integer, Integer>, Waypoint> loadData(){
+        DataReader.verifyStoragePermissions(this);
+        WaypointDataLoader loader = new WaypointDataLoader("6_2_data_modified.json");
+        HashMap<Pair<Integer, Integer>, Waypoint> dataMap = loader.loadWaypoints();
+        List<Waypoint> waypoints = dataMap.values().stream().collect(Collectors.toList());
+        Log.d("Waypoint data: ",  "Size: " + waypoints.size());
+        for(Waypoint w : waypoints){
+            String debugOut = "x: " + w.getX() + " y: " + w.getY() + " : ";
+            for(Map.Entry<String, Integer> entry : w.getBeaconCount().entrySet()){
+                debugOut += "Id: " + entry.getKey() + " Count: " + entry.getValue() + ", ";
+            }
+            Log.d("Waypoint Data", debugOut);
+        }
+
+        return dataMap;
+    }
+
+    /**
+     * Will get called by the BeaconScanOperator when the current waypoint being searched for is found
+     */
+    public void foundCurrentWaypoint(){
+        if(wayPointOrder.size() <= 0){
+            Log.d("DONE: ", "OBJECTIVE REACHED");
+            scanner.stopScanning();
+            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            builder.setMessage(alertMessages.pollLast()).setTitle("OBJECTIVE REACHED");
+            builder.show();
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage(alertMessages.pollLast()).setTitle("Directions");
+        builder.show();
+
+        Waypoint next = waypoints.get(wayPointOrder.pollLast());
+        scatterPlot.addWaypoint(next);
+        scanner.setWaypointScanningFor(next);
     }
 
     @Override
@@ -296,6 +398,7 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
         super.onStop();
         sensorManager.unregisterListener(this);
         locationManager.removeUpdates(this);
+        scanner.stopScanning();
     }
 
     @Override
@@ -307,15 +410,19 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
             // get location permission
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
                     || ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED
-                    || ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    || ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                    || ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_PRIVILEGED) != PackageManager.PERMISSION_GRANTED
+            ) {
                 ActivityCompat.requestPermissions(GraphActivity.this, new String[] {
                         Manifest.permission.ACCESS_FINE_LOCATION,
                         Manifest.permission.ACCESS_COARSE_LOCATION,
-                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        Manifest.permission.BLUETOOTH_PRIVILEGED
                 },0);
                 finish();
             }
 
+            scanner.startScanning();
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, GraphActivity.this);
 
             if (isCalibrated) {
@@ -499,6 +606,8 @@ public class GraphActivity extends AppCompatActivity implements SensorEventListe
                     //rotating points by 90 degrees, so north is up
                     float rPointX = -oPointY;
                     float rPointY = oPointX;
+
+                    Log.d("Current Point:",  "Point: " + rPointX + ", " + rPointY);
 
                     scatterPlot.addPoint(rPointX, rPointY);
 
